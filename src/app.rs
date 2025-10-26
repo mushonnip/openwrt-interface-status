@@ -23,8 +23,6 @@ pub struct AppModel {
     popup: Option<Id>,
     /// Configuration data that persists between application runs.
     config: Config,
-    /// Example row toggler.
-    example_row: bool,
 
     interface_status: Option<InterfaceStatus>,
 }
@@ -34,9 +32,7 @@ pub struct AppModel {
 pub enum Message {
     TogglePopup,
     PopupClosed(Id),
-    SubscriptionChannel,
     UpdateConfig(Config),
-    ToggleExampleRow(bool),
     UpdateInterfaceStatus(Result<InterfaceStatus, String>),
     Tick,
     RestartInterface,
@@ -114,21 +110,6 @@ impl cosmic::Application for AppModel {
         cosmic::widget::autosize::autosize(button, cosmic::widget::Id::unique()).into()
     }
 
-    // fn view_window(&self, _id: Id) -> Element<'_, Self::Message> {
-    //     let ip_text = self
-    //         .interface_status
-    //         .as_ref()
-    //         .and_then(|status| status.ipv4_address.get(0))
-    //         .map(|addr| widget::text(addr.address.clone()))
-    //         .unwrap_or_else(|| widget::text("N/A"));
-
-    //     let content_list = widget::list_column()
-    //         .padding(5)
-    //         .spacing(0)
-    //         .add(widget::settings::item("IP", ip_text));
-
-    //     self.core.applet.popup_container(content_list).into()
-    // }
     fn view_window(&self, _id: Id) -> Element<'_, Self::Message> {
         let ip_text = self
             .interface_status
@@ -141,11 +122,21 @@ impl cosmic::Application for AppModel {
             .on_press(Message::RestartInterface)
             .padding(8);
 
+        let refresh_button = button(widget::text("Refresh IP"))
+            .on_press(Message::Tick)
+            .padding(8);
+
+        // Place both buttons in a row
+        let button_row = widget::row()
+            .spacing(10) // space between buttons
+            .push(restart_button)
+            .push(refresh_button);
+
         let content_list = widget::list_column()
             .padding(5)
-            .spacing(10) // increased spacing for better visual separation
+            .spacing(10)
             .add(widget::settings::item("IP", ip_text))
-            .add(restart_button); // add the button to the list
+            .add(button_row); // Add the row of buttons instead of a single button
 
         self.core.applet.popup_container(content_list).into()
     }
@@ -156,19 +147,9 @@ impl cosmic::Application for AppModel {
     /// emit messages to the application through a channel. They are started at the
     /// beginning of the application, and persist through its lifetime.
     fn subscription(&self) -> Subscription<Self::Message> {
-        struct MySubscription;
         struct TickerSubscription;
 
         Subscription::batch(vec![
-            // Create a subscription which emits updates through a channel.
-            Subscription::run_with_id(
-                std::any::TypeId::of::<MySubscription>(),
-                cosmic::iced::stream::channel(4, move |mut channel| async move {
-                    _ = channel.send(Message::SubscriptionChannel).await;
-
-                    futures_util::future::pending().await
-                }),
-            ),
             Subscription::run_with_id(
                 std::any::TypeId::of::<TickerSubscription>(),
                 cosmic::iced::stream::channel(4, move |mut channel| async move {
@@ -200,13 +181,9 @@ impl cosmic::Application for AppModel {
     /// on the application's async runtime.
     fn update(&mut self, message: Self::Message) -> Task<cosmic::Action<Self::Message>> {
         match message {
-            Message::SubscriptionChannel => {
-                // For example purposes only.
-            }
             Message::UpdateConfig(config) => {
                 self.config = config;
             }
-            Message::ToggleExampleRow(toggled) => self.example_row = toggled,
             Message::TogglePopup => {
                 return if let Some(p) = self.popup.take() {
                     destroy_popup(p)
