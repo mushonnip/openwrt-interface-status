@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
+use std::time::Duration;
+
+use crate::checker::status::InterfaceStatus;
 use crate::config::Config;
-use crate::fl;
+use crate::{checker, fl};
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::iced::{window::Id, Limits, Subscription};
 use cosmic::iced_winit::commands::popup::{destroy_popup, get_popup};
@@ -21,6 +24,8 @@ pub struct AppModel {
     config: Config,
     /// Example row toggler.
     example_row: bool,
+
+    interface_status: Option<InterfaceStatus>,
 }
 
 /// Messages emitted by the application and its widgets.
@@ -31,6 +36,8 @@ pub enum Message {
     SubscriptionChannel,
     UpdateConfig(Config),
     ToggleExampleRow(bool),
+    UpdateInterfaceStatus(InterfaceStatus),
+    Tick,
 }
 
 /// Create a COSMIC application from the app model
@@ -90,11 +97,19 @@ impl cosmic::Application for AppModel {
     /// Application events will be processed through the view. Any messages emitted by
     /// events received by widgets will be passed to the update method.
     fn view(&self) -> Element<'_, Self::Message> {
-        self.core
-            .applet
-            .icon_button("display-symbolic")
-            .on_press(Message::TogglePopup)
-            .into()
+        let status = match &self.interface_status {
+            Some(status) => status.format_uptime(),
+            None => String::from("No interface"),
+        };
+
+        let st = cosmic::iced_widget::row![cosmic::iced_widget::text(status)];
+
+        let data = cosmic::Element::from(st);
+        let button = cosmic::widget::button::custom(data)
+            .class(cosmic::theme::Button::AppletIcon)
+            .on_press_down(Message::TogglePopup);
+
+        cosmic::widget::autosize::autosize(button, cosmic::widget::Id::unique()).into()
     }
 
     fn view_window(&self, _id: Id) -> Element<'_, Self::Message> {
@@ -116,6 +131,7 @@ impl cosmic::Application for AppModel {
     /// beginning of the application, and persist through its lifetime.
     fn subscription(&self) -> Subscription<Self::Message> {
         struct MySubscription;
+        struct TickerSubscription;
 
         Subscription::batch(vec![
             // Create a subscription which emits updates through a channel.
@@ -124,6 +140,18 @@ impl cosmic::Application for AppModel {
                 cosmic::iced::stream::channel(4, move |mut channel| async move {
                     _ = channel.send(Message::SubscriptionChannel).await;
 
+                    futures_util::future::pending().await
+                }),
+            ),
+            Subscription::run_with_id(
+                std::any::TypeId::of::<TickerSubscription>(),
+                cosmic::iced::stream::channel(4, move |mut channel| async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(60)).await;
+                        if channel.send(Message::Tick).await.is_err() {
+                            break;
+                        }
+                    }
                     futures_util::future::pending().await
                 }),
             ),
@@ -178,6 +206,20 @@ impl cosmic::Application for AppModel {
                 if self.popup.as_ref() == Some(&id) {
                     self.popup = None;
                 }
+            }
+            Message::UpdateInterfaceStatus(interface_status) => {
+                self.interface_status = Some(interface_status)
+            }
+            Message::Tick => {
+                // Trigger interface status update every 5 seconds
+                return Task::perform(
+                    async { checker::status::fetch_interface_status().await },
+                    |status| {
+                        cosmic::Action::App(Message::UpdateInterfaceStatus(
+                            status.expect("Failed to fetch interface status"),
+                        ))
+                    },
+                );
             }
         }
         Task::none()
