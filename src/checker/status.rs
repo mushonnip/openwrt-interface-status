@@ -172,3 +172,49 @@ pub async fn fetch_interface_status() -> Result<InterfaceStatus, AppError> {
     let status: InterfaceStatus = serde_json::from_str(&stdout)?;
     Ok(status)
 }
+
+pub async fn restart_interface() -> Result<(), AppError> {
+    let config = OpenWrtConfig::default();
+    let command = format!(
+        "ubus call network.interface.{} down && ubus call network.interface.{} up",
+        config.interface, config.interface
+    );
+
+    // Build SSH command arguments
+    let mut args = vec![
+        "-o".to_string(),
+        "StrictHostKeyChecking=no".to_string(),
+        "-o".to_string(),
+        "UserKnownHostsFile=/dev/null".to_string(),
+    ];
+
+    // Add identity file if private key path is specified
+    if let Some(private_key) = &config.private_key_path {
+        args.push("-i".to_string());
+        args.push(private_key.clone());
+    }
+
+    // Add username and host
+    args.push(format!("{}@{}", config.username, config.host));
+
+    // Add the command to execute
+    args.push(command);
+
+    // For now, let's implement a simple version using tokio::process::Command to run ssh
+    // This is a temporary implementation until we get the russh client working properly
+    let output = tokio::process::Command::new("ssh")
+        .args(&args)
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::Other(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("SSH command failed: {}", stderr),
+        )));
+    }
+
+
+    Ok(())
+}

@@ -2,11 +2,12 @@
 
 use std::time::Duration;
 
+use crate::checker;
 use crate::checker::status::InterfaceStatus;
 use crate::config::Config;
-use crate::{checker, fl};
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::iced::{window::Id, Limits, Subscription};
+use cosmic::iced_widget::button;
 use cosmic::iced_winit::commands::popup::{destroy_popup, get_popup};
 use cosmic::prelude::*;
 use cosmic::widget;
@@ -36,8 +37,9 @@ pub enum Message {
     SubscriptionChannel,
     UpdateConfig(Config),
     ToggleExampleRow(bool),
-    UpdateInterfaceStatus(InterfaceStatus),
+    UpdateInterfaceStatus(Result<InterfaceStatus, String>),
     Tick,
+    RestartInterface,
 }
 
 /// Create a COSMIC application from the app model
@@ -112,14 +114,38 @@ impl cosmic::Application for AppModel {
         cosmic::widget::autosize::autosize(button, cosmic::widget::Id::unique()).into()
     }
 
+    // fn view_window(&self, _id: Id) -> Element<'_, Self::Message> {
+    //     let ip_text = self
+    //         .interface_status
+    //         .as_ref()
+    //         .and_then(|status| status.ipv4_address.get(0))
+    //         .map(|addr| widget::text(addr.address.clone()))
+    //         .unwrap_or_else(|| widget::text("N/A"));
+
+    //     let content_list = widget::list_column()
+    //         .padding(5)
+    //         .spacing(0)
+    //         .add(widget::settings::item("IP", ip_text));
+
+    //     self.core.applet.popup_container(content_list).into()
+    // }
     fn view_window(&self, _id: Id) -> Element<'_, Self::Message> {
+        let ip_text = self
+            .interface_status
+            .as_ref()
+            .and_then(|status| status.ipv4_address.get(0))
+            .map(|addr| widget::text(addr.address.clone()))
+            .unwrap_or_else(|| widget::text("N/A"));
+
+        let restart_button = button(widget::text("Restart Interface"))
+            .on_press(Message::RestartInterface)
+            .padding(8);
+
         let content_list = widget::list_column()
             .padding(5)
-            .spacing(0)
-            .add(widget::settings::item(
-                fl!("example-row"),
-                widget::toggler(self.example_row).on_toggle(Message::ToggleExampleRow),
-            ));
+            .spacing(10) // increased spacing for better visual separation
+            .add(widget::settings::item("IP", ip_text))
+            .add(restart_button); // add the button to the list
 
         self.core.applet.popup_container(content_list).into()
     }
@@ -147,10 +173,10 @@ impl cosmic::Application for AppModel {
                 std::any::TypeId::of::<TickerSubscription>(),
                 cosmic::iced::stream::channel(4, move |mut channel| async move {
                     loop {
-                        tokio::time::sleep(Duration::from_secs(60)).await;
                         if channel.send(Message::Tick).await.is_err() {
                             break;
                         }
+                        tokio::time::sleep(Duration::from_secs(60)).await;
                     }
                     futures_util::future::pending().await
                 }),
@@ -207,19 +233,33 @@ impl cosmic::Application for AppModel {
                     self.popup = None;
                 }
             }
-            Message::UpdateInterfaceStatus(interface_status) => {
-                self.interface_status = Some(interface_status)
+            Message::UpdateInterfaceStatus(result) => {
+                match result {
+                    Ok(status) => {
+                        self.interface_status = Some(status);
+                    }
+                    Err(e) => {
+                        eprintln!("Error updating interface status: {}", e);
+                        self.interface_status = None; // or leave unchanged: `self.interface_status = None;` is optional
+                    }
+                }
             }
             Message::Tick => {
                 // Trigger interface status update every 5 seconds
                 return Task::perform(
-                    async { checker::status::fetch_interface_status().await },
-                    |status| {
-                        cosmic::Action::App(Message::UpdateInterfaceStatus(
-                            status.expect("Failed to fetch interface status"),
-                        ))
+                    async {
+                        match checker::status::fetch_interface_status().await {
+                            Ok(status) => Ok(status),
+                            Err(e) => Err(e.to_string()), // or format!("{:?}", e) if e doesn't impl Display
+                        }
                     },
+                    |result| cosmic::Action::App(Message::UpdateInterfaceStatus(result)),
                 );
+            }
+            Message::RestartInterface => {
+                return Task::perform(async { checker::status::restart_interface().await }, |_| {
+                    cosmic::Action::App(Message::Tick)
+                });
             }
         }
         Task::none()
