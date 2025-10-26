@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Openwrt Interface Status
+Comment=Show Openwrt interface status in applet
+Type=Application
+Icon=com.github.mushonnip.OpenwrtInterfaceStatus
+Exec=openwrt-interface-status %F
+Terminal=false
+StartupNotify=true
+Categories=COSMIC
+Keywords=COSMIC
+MimeType=
